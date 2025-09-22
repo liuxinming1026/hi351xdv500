@@ -154,6 +154,32 @@ static const sample_region_osd_glyph_entry g_sample_region_osd_glyph_map[] = {
     { ' ', (const td_u8 *)g_sample_region_osd_glyph_space },
 };
 
+typedef struct {
+    ot_rgn_handle handle;
+    ot_mpp_chn chn;
+    ot_size canvas;
+    ot_rect rect;
+    td_bool created;
+    td_bool attached;
+    td_u32 last_in;
+    td_u32 last_out;
+} sample_region_osd_context;
+
+static sample_region_osd_context g_sample_region_osd_ctx_venc0 = {
+    .handle = 0,
+    .chn = { OT_ID_VPSS, 1, 0 },
+};
+
+static sample_region_osd_context g_sample_region_osd_ctx_venc1 = {
+    .handle = 1,
+    .chn = { OT_ID_VPSS, 1, 1 },
+};
+
+static td_void sample_region_osd_prepare_layout(sample_region_osd_context *ctx);
+static td_s32 sample_region_osd_init_ctx(sample_region_osd_context *ctx);
+static td_s32 sample_region_osd_update_ctx(sample_region_osd_context *ctx, td_u32 in_cnt, td_u32 out_cnt);
+static td_s32 sample_region_osd_destroy_ctx(sample_region_osd_context *ctx);
+
 static const td_u16 *sample_region_osd_find_glyph(char ch)
 {
     td_u32 i;
@@ -265,51 +291,223 @@ static td_void sample_region_osd_draw_line(td_u16 *dst, td_u32 stride_pixels, td
     }
 }
 
-/* 可放在 sample_region_utils.c / sample_vio.c */
-td_s32 sample_region_attach_red_cover_to_venc0(td_void)
+static td_void sample_region_osd_prepare_layout(sample_region_osd_context *ctx)
 {
-    /**************** 0. 句柄 & 目标通道 ****************/
-    const ot_rgn_handle handle = 0;                   /* Region 句柄 */
-    ot_mpp_chn chn = { OT_ID_VPSS, 1, 0 };            /* VENC dev 0 / chn 0 */
+    if (ctx == TD_NULL) {
+        return;
+    }
 
-    /**************** 1. 创建 Region（只需 type） ****************/
+    ctx->canvas.width = SAMPLE_REGION_OSD_CANVAS_WIDTH;
+    ctx->canvas.height = SAMPLE_REGION_OSD_CANVAS_HEIGHT;
+
+    if (ctx->canvas.width > OUT_WIDTH) {
+        ctx->canvas.width = OUT_WIDTH;
+    }
+    if (ctx->canvas.height > OUT_HEIGHT) {
+        ctx->canvas.height = OUT_HEIGHT;
+    }
+
+    ctx->rect.width = ctx->canvas.width;
+    ctx->rect.height = ctx->canvas.height;
+    ctx->rect.x = (OUT_WIDTH > ctx->rect.width) ? (td_s32)(OUT_WIDTH - ctx->rect.width) : 0;
+    ctx->rect.y = 0;
+}
+
+static td_s32 sample_region_osd_destroy_ctx(sample_region_osd_context *ctx)
+{
+    td_s32 ret = TD_SUCCESS;
+
+    if (ctx == TD_NULL) {
+        return TD_FAILURE;
+    }
+
+    if (ctx->attached == TD_TRUE) {
+        td_s32 tmp = ss_mpi_rgn_detach_from_chn(ctx->handle, &ctx->chn);
+        if (tmp != TD_SUCCESS) {
+            sample_print("ss_mpi_rgn_detach_from_chn failed %#x\n", tmp);
+            ret = tmp;
+        } else {
+            ctx->attached = TD_FALSE;
+        }
+    }
+
+    if (ctx->created == TD_TRUE) {
+        td_s32 tmp = ss_mpi_rgn_destroy(ctx->handle);
+        if (tmp != TD_SUCCESS) {
+            sample_print("ss_mpi_rgn_destroy failed %#x\n", tmp);
+            if (ret == TD_SUCCESS) {
+                ret = tmp;
+            }
+        } else {
+            ctx->created = TD_FALSE;
+        }
+    }
+
+    ctx->last_in = 0;
+    ctx->last_out = 0;
+    sample_region_osd_prepare_layout(ctx);
+
+    return ret;
+}
+
+static td_s32 sample_region_osd_init_ctx(sample_region_osd_context *ctx)
+{
+    char text[64];
+    td_s32 ret;
     ot_rgn_attr rgn_attr;
-    memset(&rgn_attr, 0, sizeof(rgn_attr));
-    rgn_attr.type = OT_RGN_COVER;                     /* 只指定类型 */
+    ot_rgn_chn_attr chn_attr;
+    ot_rgn_canvas_info canvas_info;
+    td_u32 stride_pixels;
 
-    td_s32 ret = ss_mpi_rgn_create(handle, &rgn_attr);
+    if (ctx == TD_NULL) {
+        return TD_FAILURE;
+    }
+
+    if (ctx->attached == TD_TRUE) {
+        return TD_SUCCESS;
+    }
+
+    sample_region_osd_prepare_layout(ctx);
+
+    if (ctx->created != TD_TRUE) {
+        (td_void)memset(&rgn_attr, 0, sizeof(rgn_attr));
+        rgn_attr.type = OT_RGN_OVERLAYEX;
+        rgn_attr.attr.overlayex.pixel_format = OT_PIXEL_FORMAT_ARGB_1555;
+        rgn_attr.attr.overlayex.bg_color = SAMPLE_REGION_OSD_COLOR_TRANSPARENT;
+        rgn_attr.attr.overlayex.size.width = ctx->canvas.width;
+        rgn_attr.attr.overlayex.size.height = ctx->canvas.height;
+        rgn_attr.attr.overlayex.canvas_num = 1;
+
+        ret = ss_mpi_rgn_create(ctx->handle, &rgn_attr);
+        if (ret != TD_SUCCESS) {
+            sample_print("ss_mpi_rgn_create failed %#x\n", ret);
+            return ret;
+        }
+        ctx->created = TD_TRUE;
+    }
+
+    (td_void)memset(&chn_attr, 0, sizeof(chn_attr));
+    chn_attr.is_show = TD_TRUE;
+    chn_attr.type = OT_RGN_OVERLAYEX;
+    chn_attr.attr.overlayex_chn.layer = 0;
+    chn_attr.attr.overlayex_chn.coord = OT_COORD_ABS;
+    chn_attr.attr.overlayex_chn.rect = ctx->rect;
+    chn_attr.attr.overlayex_chn.fg_alpha = 255;
+    chn_attr.attr.overlayex_chn.bg_alpha = 0;
+
+    ret = ss_mpi_rgn_attach_to_chn(ctx->handle, &ctx->chn, &chn_attr);
     if (ret != TD_SUCCESS) {
-        sample_print("ss_mpi_rgn_create failed %#x\n", ret);
+        sample_print("ss_mpi_rgn_attach_to_chn failed %#x\n", ret);
+        if (ctx->created == TD_TRUE) {
+            (td_void)ss_mpi_rgn_destroy(ctx->handle);
+            ctx->created = TD_FALSE;
+        }
+        return ret;
+    }
+    ctx->attached = TD_TRUE;
+
+    (td_void)memset(&canvas_info, 0, sizeof(canvas_info));
+    ret = ss_mpi_rgn_get_canvas_info(ctx->handle, &canvas_info);
+    if (ret != TD_SUCCESS) {
+        sample_print("ss_mpi_rgn_get_canvas_info failed %#x\n", ret);
+        (td_void)sample_region_osd_destroy_ctx(ctx);
         return ret;
     }
 
-    /**************** 2. 填通道属性 & Attach ****************/
-    ot_rgn_chn_attr chn_attr;
-    memset(&chn_attr, 0, sizeof(chn_attr));
-
-    chn_attr.is_show = TD_TRUE;                      /* 显示开关 */
-    chn_attr.type    = OT_RGN_COVER;                 /* 必须一致 */
-
-    /* --- cover_chn --- */
-    chn_attr.attr.cover_chn.layer  = 0;              /* 层号 */
-    chn_attr.attr.cover_chn.coord  = OT_COORD_ABS;   /* 绝对坐标 */
-
-    /* -------------- cover 具体形状 -------------- */
-    chn_attr.attr.cover_chn.cover.type                     = OT_COVER_RECT;
-    chn_attr.attr.cover_chn.cover.rect_attr.is_solid       = TD_TRUE;
-    chn_attr.attr.cover_chn.cover.rect_attr.thick          = 0;      /* 实心时无意义 */
-    chn_attr.attr.cover_chn.cover.rect_attr.rect.x         = 200;
-    chn_attr.attr.cover_chn.cover.rect_attr.rect.y         = 120;
-    chn_attr.attr.cover_chn.cover.rect_attr.rect.width     = 320;
-    chn_attr.attr.cover_chn.cover.rect_attr.rect.height    = 180;
-    chn_attr.attr.cover_chn.cover.color                    = 0xFF0000; /* RRGGBB */
-
-    ret = ss_mpi_rgn_attach_to_chn(handle, &chn, &chn_attr);
-    if (ret != TD_SUCCESS) {
-        sample_print("ss_mpi_rgn_attach_to_chn failed %#x\n", ret);
-        (td_void)ss_mpi_rgn_destroy(handle);
+    if ((canvas_info.virt_addr == TD_NULL) || (canvas_info.stride == 0)) {
+        sample_print("invalid canvas info\n");
+        (td_void)sample_region_osd_destroy_ctx(ctx);
+        return TD_FAILURE;
     }
-    return ret;
+
+    stride_pixels = canvas_info.stride / sizeof(td_u16);
+    sample_region_osd_clear_canvas((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
+        ctx->canvas.height);
+
+    if (snprintf_s(text, sizeof(text), sizeof(text) - 1, "IN: %u\nOUT: %u", 0, 0) < 0) {
+        sample_print("snprintf_s failed\n");
+        (td_void)sample_region_osd_destroy_ctx(ctx);
+        return TD_FAILURE;
+    }
+
+    sample_region_osd_draw_line((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
+        ctx->canvas.height, 0, 0, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
+
+    ret = ss_mpi_rgn_update_canvas(ctx->handle);
+    if (ret != TD_SUCCESS) {
+        sample_print("ss_mpi_rgn_update_canvas failed %#x\n", ret);
+        (td_void)sample_region_osd_destroy_ctx(ctx);
+        return ret;
+    }
+
+    ctx->last_in = 0;
+    ctx->last_out = 0;
+
+    return TD_SUCCESS;
+}
+
+static td_s32 sample_region_osd_update_ctx(sample_region_osd_context *ctx, td_u32 in_cnt, td_u32 out_cnt)
+{
+    char text[64];
+    ot_rgn_canvas_info canvas_info;
+    td_u32 stride_pixels;
+    td_s32 ret;
+
+    if (ctx == TD_NULL) {
+        return TD_FAILURE;
+    }
+
+    if (ctx->attached != TD_TRUE) {
+        ret = sample_region_osd_init_ctx(ctx);
+        if (ret != TD_SUCCESS) {
+            return ret;
+        }
+    }
+
+    if ((ctx->last_in == in_cnt) && (ctx->last_out == out_cnt)) {
+        return TD_SUCCESS;
+    }
+
+    (td_void)memset(&canvas_info, 0, sizeof(canvas_info));
+    ret = ss_mpi_rgn_get_canvas_info(ctx->handle, &canvas_info);
+    if (ret != TD_SUCCESS) {
+        sample_print("ss_mpi_rgn_get_canvas_info failed %#x\n", ret);
+        return ret;
+    }
+
+    if ((canvas_info.virt_addr == TD_NULL) || (canvas_info.stride == 0)) {
+        sample_print("invalid canvas info\n");
+        return TD_FAILURE;
+    }
+
+    stride_pixels = canvas_info.stride / sizeof(td_u16);
+    sample_region_osd_clear_canvas((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
+        ctx->canvas.height);
+
+    if (snprintf_s(text, sizeof(text), sizeof(text) - 1, "IN: %u\nOUT: %u", in_cnt, out_cnt) < 0) {
+        sample_print("snprintf_s failed\n");
+        return TD_FAILURE;
+    }
+
+    sample_region_osd_draw_line((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
+        ctx->canvas.height, 0, 0, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
+
+    ret = ss_mpi_rgn_update_canvas(ctx->handle);
+    if (ret != TD_SUCCESS) {
+        sample_print("ss_mpi_rgn_update_canvas failed %#x\n", ret);
+        return ret;
+    }
+
+    ctx->last_in = in_cnt;
+    ctx->last_out = out_cnt;
+
+    return TD_SUCCESS;
+}
+
+/* 可放在 sample_region_utils.c / sample_vio.c */
+td_s32 sample_region_attach_red_cover_to_venc0(td_void)
+{
+    return sample_region_osd_init_ctx(&g_sample_region_osd_ctx_venc0);
 }
 
 
@@ -317,46 +515,25 @@ td_s32 sample_region_attach_red_cover_to_venc0(td_void)
 /* 可放在 sample_region_utils.c / sample_vio.c */
 td_s32 sample_region_attach_red_cover_to_venc1(td_void)
 {
-    /**************** 0. 句柄 & 目标通道 ****************/
-    const ot_rgn_handle handle = 0;                   /* Region 句柄 */
-    ot_mpp_chn chn = { OT_ID_VPSS, 1, 1 };            /* VENC dev 0 / chn 0 */
+    return sample_region_osd_init_ctx(&g_sample_region_osd_ctx_venc1);
+}
 
-    /**************** 1. 创建 Region（只需 type） ****************/
-    ot_rgn_attr rgn_attr;
-    memset(&rgn_attr, 0, sizeof(rgn_attr));
-    rgn_attr.type = OT_RGN_COVER;                     /* 只指定类型 */
+td_s32 sample_region_osd_update_venc0(td_u32 in_cnt, td_u32 out_cnt)
+{
+    return sample_region_osd_update_ctx(&g_sample_region_osd_ctx_venc0, in_cnt, out_cnt);
+}
 
-    td_s32 ret = ss_mpi_rgn_create(handle, &rgn_attr);
-    if (ret != TD_SUCCESS) {
-        sample_print("ss_mpi_rgn_create failed %#x\n", ret);
-        return ret;
-    }
+td_s32 sample_region_osd_update_venc1(td_u32 in_cnt, td_u32 out_cnt)
+{
+    return sample_region_osd_update_ctx(&g_sample_region_osd_ctx_venc1, in_cnt, out_cnt);
+}
 
-    /**************** 2. 填通道属性 & Attach ****************/
-    ot_rgn_chn_attr chn_attr;
-    memset(&chn_attr, 0, sizeof(chn_attr));
+td_s32 sample_region_osd_stop_venc0(td_void)
+{
+    return sample_region_osd_destroy_ctx(&g_sample_region_osd_ctx_venc0);
+}
 
-    chn_attr.is_show = TD_TRUE;                      /* 显示开关 */
-    chn_attr.type    = OT_RGN_COVER;                 /* 必须一致 */
-
-    /* --- cover_chn --- */
-    chn_attr.attr.cover_chn.layer  = 0;              /* 层号 */
-    chn_attr.attr.cover_chn.coord  = OT_COORD_ABS;   /* 绝对坐标 */
-
-    /* -------------- cover 具体形状 -------------- */
-    chn_attr.attr.cover_chn.cover.type                     = OT_COVER_RECT;
-    chn_attr.attr.cover_chn.cover.rect_attr.is_solid       = TD_TRUE;
-    chn_attr.attr.cover_chn.cover.rect_attr.thick          = 0;      /* 实心时无意义 */
-    chn_attr.attr.cover_chn.cover.rect_attr.rect.x         = 200;
-    chn_attr.attr.cover_chn.cover.rect_attr.rect.y         = 120;
-    chn_attr.attr.cover_chn.cover.rect_attr.rect.width     = 320;
-    chn_attr.attr.cover_chn.cover.rect_attr.rect.height    = 180;
-    chn_attr.attr.cover_chn.cover.color                    = 0xFF0000; /* RRGGBB */
-
-    ret = ss_mpi_rgn_attach_to_chn(handle, &chn, &chn_attr);
-    if (ret != TD_SUCCESS) {
-        sample_print("ss_mpi_rgn_attach_to_chn failed %#x\n", ret);
-        (td_void)ss_mpi_rgn_destroy(handle);
-    }
-    return ret;
+td_s32 sample_region_osd_stop_venc1(td_void)
+{
+    return sample_region_osd_destroy_ctx(&g_sample_region_osd_ctx_venc1);
 }
