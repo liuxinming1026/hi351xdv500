@@ -6,6 +6,8 @@
 #define SAMPLE_REGION_OSD_FONT_HEIGHT            32U
 #define SAMPLE_REGION_OSD_COLUMN_SPACING         4U
 #define SAMPLE_REGION_OSD_ROW_SPACING            8U
+#define SAMPLE_REGION_OSD_PADDING_X              SAMPLE_REGION_OSD_COLUMN_SPACING
+#define SAMPLE_REGION_OSD_PADDING_Y              SAMPLE_REGION_OSD_ROW_SPACING
 #define SAMPLE_REGION_OSD_ALPHA_MASK             0x8000
 #define SAMPLE_REGION_OSD_COLOR_TRANSPARENT      0x0000
 #define SAMPLE_REGION_OSD_COLOR_FOREGROUND       (SAMPLE_REGION_OSD_ALPHA_MASK | 0x7C00)
@@ -476,14 +478,14 @@ static td_s32 sample_region_osd_init_ctx(sample_region_osd_context *ctx)
 
     {
         td_u32 text_width = sample_region_osd_measure_text_width(text);
-        td_u32 start_x = 0;
+        td_u32 start_x = SAMPLE_REGION_OSD_PADDING_X;
 
-        if (text_width < ctx->canvas.width) {
-            start_x = ctx->canvas.width - text_width;
+        if ((start_x >= ctx->canvas.width) || (text_width + start_x > ctx->canvas.width)) {
+            start_x = 0;
         }
 
         sample_region_osd_draw_line((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
-            ctx->canvas.height, start_x, 0, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
+            ctx->canvas.height, start_x, SAMPLE_REGION_OSD_PADDING_Y, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
     }
 
     ret = ss_mpi_rgn_update_canvas(ctx->handle);
@@ -544,14 +546,14 @@ static td_s32 sample_region_osd_update_ctx(sample_region_osd_context *ctx, td_u3
 
     {
         td_u32 text_width = sample_region_osd_measure_text_width(text);
-        td_u32 start_x = 0;
+        td_u32 start_x = SAMPLE_REGION_OSD_PADDING_X;
 
-        if (text_width < ctx->canvas.width) {
-            start_x = ctx->canvas.width - text_width;
+        if ((start_x >= ctx->canvas.width) || (text_width + start_x > ctx->canvas.width)) {
+            start_x = 0;
         }
 
         sample_region_osd_draw_line((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
-            ctx->canvas.height, start_x, 0, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
+            ctx->canvas.height, start_x, SAMPLE_REGION_OSD_PADDING_Y, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
     }
 
     ret = ss_mpi_rgn_update_canvas(ctx->handle);
