@@ -243,6 +243,52 @@ static td_void sample_region_osd_draw_glyph(td_u16 *dst, td_u32 stride_pixels, t
     }
 }
 
+static td_u32 sample_region_osd_measure_text_width(const char *text)
+{
+    td_u32 line_width = 0;
+    td_u32 max_width = 0;
+    td_bool has_chars_in_line = TD_FALSE;
+
+    if (text == TD_NULL) {
+        return 0;
+    }
+
+    while (*text != '\0') {
+        const char ch = *text++;
+
+        if (ch == '\n') {
+            if (line_width > max_width) {
+                max_width = line_width;
+            }
+            line_width = 0;
+            has_chars_in_line = TD_FALSE;
+            continue;
+        }
+
+        const td_u16 *glyph = sample_region_osd_find_glyph(ch);
+        if (glyph == TD_NULL) {
+            glyph = sample_region_osd_find_glyph(' ');
+        }
+
+        if (glyph == TD_NULL) {
+            continue;
+        }
+
+        if (has_chars_in_line == TD_TRUE) {
+            line_width += SAMPLE_REGION_OSD_COLUMN_SPACING;
+        }
+
+        line_width += SAMPLE_REGION_OSD_FONT_WIDTH;
+        has_chars_in_line = TD_TRUE;
+    }
+
+    if (line_width > max_width) {
+        max_width = line_width;
+    }
+
+    return max_width;
+}
+
 static td_void sample_region_osd_draw_line(td_u16 *dst, td_u32 stride_pixels, td_u32 canvas_width,
     td_u32 canvas_height, td_u32 start_x, td_u32 start_y, const char *text, td_u16 color)
 {
@@ -430,8 +476,17 @@ static td_s32 sample_region_osd_init_ctx(sample_region_osd_context *ctx)
         return TD_FAILURE;
     }
 
-    sample_region_osd_draw_line((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
-        ctx->canvas.height, 0, 0, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
+    {
+        td_u32 text_width = sample_region_osd_measure_text_width(text);
+        td_u32 start_x = 0;
+
+        if (text_width < ctx->canvas.width) {
+            start_x = ctx->canvas.width - text_width;
+        }
+
+        sample_region_osd_draw_line((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
+            ctx->canvas.height, start_x, 0, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
+    }
 
     ret = ss_mpi_rgn_update_canvas(ctx->handle);
     if (ret != TD_SUCCESS) {
@@ -489,8 +544,17 @@ static td_s32 sample_region_osd_update_ctx(sample_region_osd_context *ctx, td_u3
         return TD_FAILURE;
     }
 
-    sample_region_osd_draw_line((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
-        ctx->canvas.height, 0, 0, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
+    {
+        td_u32 text_width = sample_region_osd_measure_text_width(text);
+        td_u32 start_x = 0;
+
+        if (text_width < ctx->canvas.width) {
+            start_x = ctx->canvas.width - text_width;
+        }
+
+        sample_region_osd_draw_line((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
+            ctx->canvas.height, start_x, 0, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
+    }
 
     ret = ss_mpi_rgn_update_canvas(ctx->handle);
     if (ret != TD_SUCCESS) {
