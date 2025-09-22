@@ -158,7 +158,7 @@ typedef struct {
     ot_rgn_handle handle;
     ot_mpp_chn chn;
     ot_size canvas;
-    ot_rect rect;
+    ot_point point;
     td_bool created;
     td_bool attached;
     td_u32 last_in;
@@ -353,10 +353,8 @@ static td_void sample_region_osd_prepare_layout(sample_region_osd_context *ctx)
         ctx->canvas.height = OUT_HEIGHT;
     }
 
-    ctx->rect.width = ctx->canvas.width;
-    ctx->rect.height = ctx->canvas.height;
-    ctx->rect.x = (OUT_WIDTH > ctx->rect.width) ? (td_s32)(OUT_WIDTH - ctx->rect.width) : 0;
-    ctx->rect.y = 0;
+    ctx->point.x = (OUT_WIDTH > ctx->canvas.width) ? (td_s32)(OUT_WIDTH - ctx->canvas.width) : 0;
+    ctx->point.y = 0;
 }
 
 static td_s32 sample_region_osd_destroy_ctx(sample_region_osd_context *ctx)
@@ -436,8 +434,8 @@ static td_s32 sample_region_osd_init_ctx(sample_region_osd_context *ctx)
     chn_attr.is_show = TD_TRUE;
     chn_attr.type = OT_RGN_OVERLAYEX;
     chn_attr.attr.overlayex_chn.layer = 0;
-    chn_attr.attr.overlayex_chn.coord = OT_COORD_ABS;
-    chn_attr.attr.overlayex_chn.rect = ctx->rect;
+    chn_attr.attr.overlayex_chn.point.x = ctx->point.x;
+    chn_attr.attr.overlayex_chn.point.y = ctx->point.y;
     chn_attr.attr.overlayex_chn.fg_alpha = 255;
     chn_attr.attr.overlayex_chn.bg_alpha = 0;
 
