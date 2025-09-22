@@ -6,8 +6,8 @@
 #define SAMPLE_REGION_OSD_FONT_HEIGHT            32U
 #define SAMPLE_REGION_OSD_COLUMN_SPACING         4U
 #define SAMPLE_REGION_OSD_ROW_SPACING            8U
-#define SAMPLE_REGION_OSD_PADDING_X              SAMPLE_REGION_OSD_COLUMN_SPACING
-#define SAMPLE_REGION_OSD_PADDING_Y              SAMPLE_REGION_OSD_ROW_SPACING
+#define SAMPLE_REGION_OSD_PADDING_X              SAMPLE_REGION_OSD_COLUMN_SPACING*5
+#define SAMPLE_REGION_OSD_PADDING_Y              SAMPLE_REGION_OSD_ROW_SPACING*2
 #define SAMPLE_REGION_OSD_ALPHA_MASK             0x8000
 #define SAMPLE_REGION_OSD_COLOR_TRANSPARENT      0x0000
 #define SAMPLE_REGION_OSD_COLOR_FOREGROUND       (SAMPLE_REGION_OSD_ALPHA_MASK | 0x7C00)
@@ -114,7 +114,7 @@ static const td_u16 g_sample_region_osd_glyph_T[SAMPLE_REGION_OSD_FONT_HEIGHT] =
     0x0000,     0x0000,     0x0000,     0x0000,     0x3ffc,     0x3ffc,     0x3ffc,     0x03c0,
     0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x03c0,
     0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x03c0,
-    0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x03c0,
+    0x03c0,     0x03c0,     0x03c0,     0x03c0,     0x0000,     0x0000,     0x0000,     0x0000,
 };
 
 static const td_u16 g_sample_region_osd_glyph_colon[SAMPLE_REGION_OSD_FONT_HEIGHT] = {
@@ -169,12 +169,12 @@ typedef struct {
 
 static sample_region_osd_context g_sample_region_osd_ctx_venc0 = {
     .handle = 0,
-    .chn = { OT_ID_VPSS, 1, 0 },
+    .chn = { OT_ID_VPSS, 0, 0 },
 };
 
 static sample_region_osd_context g_sample_region_osd_ctx_venc1 = {
     .handle = 1,
-    .chn = { OT_ID_VPSS, 1, 1 },
+    .chn = { OT_ID_VPSS, 1, 0 },
 };
 
 static td_void sample_region_osd_prepare_layout(sample_region_osd_context *ctx);
@@ -348,14 +348,7 @@ static td_void sample_region_osd_prepare_layout(sample_region_osd_context *ctx)
     ctx->canvas.width = SAMPLE_REGION_OSD_CANVAS_WIDTH;
     ctx->canvas.height = SAMPLE_REGION_OSD_CANVAS_HEIGHT;
 
-    if (ctx->canvas.width > OUT_WIDTH) {
-        ctx->canvas.width = OUT_WIDTH;
-    }
-    if (ctx->canvas.height > OUT_HEIGHT) {
-        ctx->canvas.height = OUT_HEIGHT;
-    }
-
-    ctx->point.x = (OUT_WIDTH > ctx->canvas.width) ? (td_s32)(OUT_WIDTH - ctx->canvas.width) : 0;
+    ctx->point.x = 0;
     ctx->point.y = 0;
 }
 
