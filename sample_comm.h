@@ -877,6 +877,12 @@ td_s32 sample_comm_region_detach(td_s32 handle_num, ot_rgn_type type, ot_mpp_chn
 td_s32 sample_comm_region_set_bit_map(ot_rgn_handle handle, const td_char *bmp_path);
 td_s32 sample_comm_region_get_up_canvas(ot_rgn_handle handle, const td_char *bmp_path);
 td_s32 sample_comm_region_get_min_handle(ot_rgn_type type);
+td_s32 sample_region_attach_red_cover_to_venc0(td_void);
+td_s32 sample_region_attach_red_cover_to_venc1(td_void);
+td_s32 sample_region_osd_update_venc0(td_u32 in_cnt, td_u32 out_cnt);
+td_s32 sample_region_osd_update_venc1(td_u32 in_cnt, td_u32 out_cnt);
+td_s32 sample_region_osd_stop_venc0(td_void);
+td_s32 sample_region_osd_stop_venc1(td_void);
 
 td_s32 sample_comm_audio_init(td_void);
 td_void sample_comm_audio_exit(td_void);
