@@ -1,3 +1,6 @@
+#include <string.h>
+#include <time.h>
+
 #include "sample_comm.h"
 
 #define SAMPLE_REGION_OSD_CANVAS_WIDTH           512U
@@ -6,8 +9,13 @@
 #define SAMPLE_REGION_OSD_FONT_HEIGHT            32U
 #define SAMPLE_REGION_OSD_COLUMN_SPACING         4U
 #define SAMPLE_REGION_OSD_ROW_SPACING            8U
-#define SAMPLE_REGION_OSD_PADDING_X              SAMPLE_REGION_OSD_COLUMN_SPACING*5
-#define SAMPLE_REGION_OSD_PADDING_Y              SAMPLE_REGION_OSD_ROW_SPACING*2
+#define SAMPLE_REGION_OSD_PADDING_X              (SAMPLE_REGION_OSD_COLUMN_SPACING * 5)
+#define SAMPLE_REGION_OSD_PADDING_Y              (SAMPLE_REGION_OSD_ROW_SPACING * 2)
+#define SAMPLE_REGION_OSD_CLOCK_PADDING_X        (SAMPLE_REGION_OSD_COLUMN_SPACING * 2)
+#define SAMPLE_REGION_OSD_CLOCK_PADDING_Y        (SAMPLE_REGION_OSD_ROW_SPACING)
+#define SAMPLE_REGION_OSD_CLOCK_MARGIN_X         16U
+#define SAMPLE_REGION_OSD_CLOCK_MARGIN_Y         16U
+#define SAMPLE_REGION_OSD_CLOCK_TEMPLATE         "0000-00-00 00-00-00"
 #define SAMPLE_REGION_OSD_ALPHA_MASK             0x8000
 #define SAMPLE_REGION_OSD_COLOR_TRANSPARENT      0x0000
 #define SAMPLE_REGION_OSD_COLOR_FOREGROUND       (SAMPLE_REGION_OSD_ALPHA_MASK | 0x7C00)
@@ -124,6 +132,13 @@ static const td_u16 g_sample_region_osd_glyph_colon[SAMPLE_REGION_OSD_FONT_HEIGH
     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,
 };
 
+static const td_u16 g_sample_region_osd_glyph_dash[SAMPLE_REGION_OSD_FONT_HEIGHT] = {
+    0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,
+    0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0ff0,     0x0ff0,
+    0x0ff0,     0x0ff0,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,
+    0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,
+};
+
 static const td_u16 g_sample_region_osd_glyph_space[SAMPLE_REGION_OSD_FONT_HEIGHT] = {
     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,
     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,     0x0000,
@@ -153,33 +168,67 @@ static const sample_region_osd_glyph_entry g_sample_region_osd_glyph_map[] = {
     { 'U', (const td_u8 *)g_sample_region_osd_glyph_U },
     { 'T', (const td_u8 *)g_sample_region_osd_glyph_T },
     { ':', (const td_u8 *)g_sample_region_osd_glyph_colon },
+    { '-', (const td_u8 *)g_sample_region_osd_glyph_dash },
     { ' ', (const td_u8 *)g_sample_region_osd_glyph_space },
 };
+
+typedef enum {
+    SAMPLE_REGION_OSD_ROLE_COUNTER = 0,
+    SAMPLE_REGION_OSD_ROLE_CLOCK,
+} sample_region_osd_role;
 
 typedef struct {
     ot_rgn_handle handle;
     ot_mpp_chn chn;
     ot_size canvas;
     ot_point point;
+    ot_size video_size;
+    td_u32 layer;
+    td_u32 padding_x;
+    td_u32 padding_y;
     td_bool created;
     td_bool attached;
+    sample_region_osd_role role;
     td_u32 last_in;
     td_u32 last_out;
+    td_char last_text[64];
 } sample_region_osd_context;
 
 static sample_region_osd_context g_sample_region_osd_ctx_venc0 = {
     .handle = 0,
     .chn = { OT_ID_VPSS, 0, 0 },
+    .layer = 0,
+    .role = SAMPLE_REGION_OSD_ROLE_COUNTER,
 };
 
 static sample_region_osd_context g_sample_region_osd_ctx_venc1 = {
     .handle = 1,
     .chn = { OT_ID_VPSS, 1, 0 },
+    .layer = 0,
+    .role = SAMPLE_REGION_OSD_ROLE_COUNTER,
+};
+
+static sample_region_osd_context g_sample_region_osd_time_ctx_venc0 = {
+    .handle = 2,
+    .chn = { OT_ID_VPSS, 0, 0 },
+    .layer = 1,
+    .role = SAMPLE_REGION_OSD_ROLE_CLOCK,
+};
+
+static sample_region_osd_context g_sample_region_osd_time_ctx_venc1 = {
+    .handle = 3,
+    .chn = { OT_ID_VPSS, 1, 0 },
+    .layer = 1,
+    .role = SAMPLE_REGION_OSD_ROLE_CLOCK,
 };
 
 static td_void sample_region_osd_prepare_layout(sample_region_osd_context *ctx);
+static td_s32 sample_region_osd_set_video_size(sample_region_osd_context *ctx, td_u32 width, td_u32 height);
+static td_s32 sample_region_osd_update_display_position(sample_region_osd_context *ctx);
+static td_s32 sample_region_osd_draw_text(sample_region_osd_context *ctx, const char *text);
 static td_s32 sample_region_osd_init_ctx(sample_region_osd_context *ctx);
-static td_s32 sample_region_osd_update_ctx(sample_region_osd_context *ctx, td_u32 in_cnt, td_u32 out_cnt);
+static td_s32 sample_region_osd_update_counter_ctx(sample_region_osd_context *ctx, td_u32 in_cnt, td_u32 out_cnt);
+static td_s32 sample_region_osd_update_time_ctx(sample_region_osd_context *ctx);
 static td_s32 sample_region_osd_destroy_ctx(sample_region_osd_context *ctx);
 
 static const td_u16 *sample_region_osd_find_glyph(char ch)
@@ -291,6 +340,130 @@ static td_u32 sample_region_osd_measure_text_width(const char *text)
     return max_width;
 }
 
+static td_s32 sample_region_osd_set_video_size(sample_region_osd_context *ctx, td_u32 width, td_u32 height)
+{
+    ot_point old_point;
+
+    if (ctx == TD_NULL) {
+        return TD_FAILURE;
+    }
+
+    ctx->video_size.width = width;
+    ctx->video_size.height = height;
+
+    if (ctx->role != SAMPLE_REGION_OSD_ROLE_CLOCK) {
+        return TD_SUCCESS;
+    }
+
+    old_point = ctx->point;
+    sample_region_osd_prepare_layout(ctx);
+
+    if ((ctx->attached == TD_TRUE) && ((old_point.x != ctx->point.x) || (old_point.y != ctx->point.y))) {
+        td_s32 ret = sample_region_osd_update_display_position(ctx);
+        if (ret != TD_SUCCESS) {
+            sample_print("sample_region_osd_update_display_position failed %#x\n", ret);
+            return ret;
+        }
+    }
+
+    return TD_SUCCESS;
+}
+
+static td_s32 sample_region_osd_update_display_position(sample_region_osd_context *ctx)
+{
+    ot_rgn_chn_attr chn_attr;
+
+    if ((ctx == TD_NULL) || (ctx->attached != TD_TRUE)) {
+        return TD_SUCCESS;
+    }
+
+    (td_void)memset(&chn_attr, 0, sizeof(chn_attr));
+    chn_attr.is_show = TD_TRUE;
+    chn_attr.type = OT_RGN_OVERLAYEX;
+    chn_attr.attr.overlayex_chn.point = ctx->point;
+    chn_attr.attr.overlayex_chn.layer = ctx->layer;
+    chn_attr.attr.overlayex_chn.fg_alpha = 255;
+    chn_attr.attr.overlayex_chn.bg_alpha = 0;
+
+    return ss_mpi_rgn_set_display_attr(ctx->handle, &ctx->chn, &chn_attr);
+}
+
+static td_s32 sample_region_osd_draw_text(sample_region_osd_context *ctx, const char *text)
+{
+    ot_rgn_canvas_info canvas_info;
+    td_u32 stride_pixels;
+    td_u32 text_width;
+    td_u32 start_x;
+    td_s32 ret;
+
+    if ((ctx == TD_NULL) || (text == TD_NULL)) {
+        return TD_FAILURE;
+    }
+
+    (td_void)memset(&canvas_info, 0, sizeof(canvas_info));
+    ret = ss_mpi_rgn_get_canvas_info(ctx->handle, &canvas_info);
+    if (ret != TD_SUCCESS) {
+        sample_print("ss_mpi_rgn_get_canvas_info failed %#x\n", ret);
+        return ret;
+    }
+
+    if ((canvas_info.virt_addr == TD_NULL) || (canvas_info.stride == 0)) {
+        sample_print("invalid canvas info\n");
+        return TD_FAILURE;
+    }
+
+    stride_pixels = canvas_info.stride / sizeof(td_u16);
+    sample_region_osd_clear_canvas((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width, ctx->canvas.height);
+
+    text_width = sample_region_osd_measure_text_width(text);
+    start_x = ctx->padding_x;
+    if ((start_x >= ctx->canvas.width) || (text_width + start_x > ctx->canvas.width)) {
+        start_x = 0;
+    }
+
+    sample_region_osd_draw_line((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width, ctx->canvas.height,
+        start_x, ctx->padding_y, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
+
+    ret = ss_mpi_rgn_update_canvas(ctx->handle);
+    if (ret != TD_SUCCESS) {
+        sample_print("ss_mpi_rgn_update_canvas failed %#x\n", ret);
+        return ret;
+    }
+
+    if (snprintf_s(ctx->last_text, sizeof(ctx->last_text), sizeof(ctx->last_text) - 1, "%s", text) < 0) {
+        ctx->last_text[sizeof(ctx->last_text) - 1] = '\0';
+    }
+
+    return TD_SUCCESS;
+}
+
+static td_s32 sample_region_osd_format_time_string(char *buffer, td_u32 buffer_len)
+{
+    time_t now = time(TD_NULL);
+    struct tm local_tm;
+
+    if ((buffer == TD_NULL) || (buffer_len == 0)) {
+        return TD_FAILURE;
+    }
+
+    if (now == (time_t)(-1)) {
+        sample_print("time failed\n");
+        return TD_FAILURE;
+    }
+
+    if (localtime_r(&now, &local_tm) == TD_NULL) {
+        sample_print("localtime_r failed\n");
+        return TD_FAILURE;
+    }
+
+    if (strftime(buffer, buffer_len, "%Y-%m-%d %H-%M-%S", &local_tm) == 0) {
+        sample_print("strftime failed\n");
+        return TD_FAILURE;
+    }
+
+    return TD_SUCCESS;
+}
+
 static td_void sample_region_osd_draw_line(td_u16 *dst, td_u32 stride_pixels, td_u32 canvas_width,
     td_u32 canvas_height, td_u32 start_x, td_u32 start_y, const char *text, td_u16 color)
 {
@@ -339,14 +512,61 @@ static td_void sample_region_osd_draw_line(td_u16 *dst, td_u32 stride_pixels, td
     }
 }
 
+static td_u32 sample_region_osd_align2(td_u32 value)
+{
+    return (value + 1U) & (~1U);
+}
+
 static td_void sample_region_osd_prepare_layout(sample_region_osd_context *ctx)
 {
     if (ctx == TD_NULL) {
         return;
     }
 
+    if (ctx->role == SAMPLE_REGION_OSD_ROLE_CLOCK) {
+        const char *template_text = SAMPLE_REGION_OSD_CLOCK_TEMPLATE;
+        td_u32 text_width = sample_region_osd_measure_text_width(template_text);
+        td_u32 padding_x = SAMPLE_REGION_OSD_CLOCK_PADDING_X;
+        td_u32 padding_y = SAMPLE_REGION_OSD_CLOCK_PADDING_Y;
+        ot_point new_point = { 0 };
+        td_u32 margin_x = SAMPLE_REGION_OSD_CLOCK_MARGIN_X;
+        td_u32 margin_y = SAMPLE_REGION_OSD_CLOCK_MARGIN_Y;
+        td_u32 canvas_width = sample_region_osd_align2(text_width + padding_x * 2);
+        td_u32 canvas_height = sample_region_osd_align2(SAMPLE_REGION_OSD_FONT_HEIGHT + padding_y * 2);
+
+        if (ctx->video_size.width > canvas_width) {
+            td_u32 available_x = ctx->video_size.width - canvas_width;
+            if (available_x > margin_x) {
+                new_point.x = available_x - margin_x;
+            } else {
+                new_point.x = available_x;
+            }
+        }
+
+        if (ctx->video_size.height > canvas_height) {
+            td_u32 available_y = ctx->video_size.height - canvas_height;
+            if (available_y > margin_y) {
+                new_point.y = available_y - margin_y;
+            } else {
+                new_point.y = available_y;
+            }
+        }
+
+        new_point.x &= (~1U);
+        new_point.y &= (~1U);
+
+        ctx->canvas.width = canvas_width;
+        ctx->canvas.height = canvas_height;
+        ctx->padding_x = padding_x;
+        ctx->padding_y = padding_y;
+        ctx->point = new_point;
+        return;
+    }
+
     ctx->canvas.width = SAMPLE_REGION_OSD_CANVAS_WIDTH;
     ctx->canvas.height = SAMPLE_REGION_OSD_CANVAS_HEIGHT;
+    ctx->padding_x = SAMPLE_REGION_OSD_PADDING_X;
+    ctx->padding_y = SAMPLE_REGION_OSD_PADDING_Y;
 
     ctx->point.x = 0;
     ctx->point.y = 0;
@@ -384,6 +604,7 @@ static td_s32 sample_region_osd_destroy_ctx(sample_region_osd_context *ctx)
 
     ctx->last_in = 0;
     ctx->last_out = 0;
+    ctx->last_text[0] = '\0';
     sample_region_osd_prepare_layout(ctx);
 
     return ret;
@@ -391,12 +612,9 @@ static td_s32 sample_region_osd_destroy_ctx(sample_region_osd_context *ctx)
 
 static td_s32 sample_region_osd_init_ctx(sample_region_osd_context *ctx)
 {
-    char text[64];
     td_s32 ret;
     ot_rgn_attr rgn_attr;
     ot_rgn_chn_attr chn_attr;
-    ot_rgn_canvas_info canvas_info;
-    td_u32 stride_pixels;
 
     if (ctx == TD_NULL) {
         return TD_FAILURE;
@@ -428,7 +646,7 @@ static td_s32 sample_region_osd_init_ctx(sample_region_osd_context *ctx)
     (td_void)memset(&chn_attr, 0, sizeof(chn_attr));
     chn_attr.is_show = TD_TRUE;
     chn_attr.type = OT_RGN_OVERLAYEX;
-    chn_attr.attr.overlayex_chn.layer = 0;
+    chn_attr.attr.overlayex_chn.layer = ctx->layer;
     chn_attr.attr.overlayex_chn.point.x = ctx->point.x;
     chn_attr.attr.overlayex_chn.point.y = ctx->point.y;
     chn_attr.attr.overlayex_chn.fg_alpha = 255;
@@ -445,60 +663,32 @@ static td_s32 sample_region_osd_init_ctx(sample_region_osd_context *ctx)
     }
     ctx->attached = TD_TRUE;
 
-    (td_void)memset(&canvas_info, 0, sizeof(canvas_info));
-    ret = ss_mpi_rgn_get_canvas_info(ctx->handle, &canvas_info);
-    if (ret != TD_SUCCESS) {
-        sample_print("ss_mpi_rgn_get_canvas_info failed %#x\n", ret);
-        (td_void)sample_region_osd_destroy_ctx(ctx);
-        return ret;
-    }
-
-    if ((canvas_info.virt_addr == TD_NULL) || (canvas_info.stride == 0)) {
-        sample_print("invalid canvas info\n");
-        (td_void)sample_region_osd_destroy_ctx(ctx);
-        return TD_FAILURE;
-    }
-
-    stride_pixels = canvas_info.stride / sizeof(td_u16);
-    sample_region_osd_clear_canvas((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
-        ctx->canvas.height);
-
-    if (snprintf_s(text, sizeof(text), sizeof(text) - 1, "IN: %u\nOUT: %u", 0, 0) < 0) {
-        sample_print("snprintf_s failed\n");
-        (td_void)sample_region_osd_destroy_ctx(ctx);
-        return TD_FAILURE;
-    }
-
-    {
-        td_u32 text_width = sample_region_osd_measure_text_width(text);
-        td_u32 start_x = SAMPLE_REGION_OSD_PADDING_X;
-
-        if ((start_x >= ctx->canvas.width) || (text_width + start_x > ctx->canvas.width)) {
-            start_x = 0;
-        }
-
-        sample_region_osd_draw_line((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
-            ctx->canvas.height, start_x, SAMPLE_REGION_OSD_PADDING_Y, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
-    }
-
-    ret = ss_mpi_rgn_update_canvas(ctx->handle);
-    if (ret != TD_SUCCESS) {
-        sample_print("ss_mpi_rgn_update_canvas failed %#x\n", ret);
-        (td_void)sample_region_osd_destroy_ctx(ctx);
-        return ret;
-    }
-
     ctx->last_in = 0;
     ctx->last_out = 0;
+    ctx->last_text[0] = '\0';
+
+    if (ctx->role == SAMPLE_REGION_OSD_ROLE_COUNTER) {
+        ctx->last_in = (td_u32)(~0U);
+        ctx->last_out = (td_u32)(~0U);
+        ret = sample_region_osd_update_counter_ctx(ctx, 0, 0);
+        if (ret != TD_SUCCESS) {
+            (td_void)sample_region_osd_destroy_ctx(ctx);
+            return ret;
+        }
+    } else if (ctx->role == SAMPLE_REGION_OSD_ROLE_CLOCK) {
+        ret = sample_region_osd_update_time_ctx(ctx);
+        if (ret != TD_SUCCESS) {
+            (td_void)sample_region_osd_destroy_ctx(ctx);
+            return ret;
+        }
+    }
 
     return TD_SUCCESS;
 }
 
-static td_s32 sample_region_osd_update_ctx(sample_region_osd_context *ctx, td_u32 in_cnt, td_u32 out_cnt)
+static td_s32 sample_region_osd_update_counter_ctx(sample_region_osd_context *ctx, td_u32 in_cnt, td_u32 out_cnt)
 {
     char text[64];
-    ot_rgn_canvas_info canvas_info;
-    td_u32 stride_pixels;
     td_s32 ret;
 
     if (ctx == TD_NULL) {
@@ -516,42 +706,13 @@ static td_s32 sample_region_osd_update_ctx(sample_region_osd_context *ctx, td_u3
         return TD_SUCCESS;
     }
 
-    (td_void)memset(&canvas_info, 0, sizeof(canvas_info));
-    ret = ss_mpi_rgn_get_canvas_info(ctx->handle, &canvas_info);
-    if (ret != TD_SUCCESS) {
-        sample_print("ss_mpi_rgn_get_canvas_info failed %#x\n", ret);
-        return ret;
-    }
-
-    if ((canvas_info.virt_addr == TD_NULL) || (canvas_info.stride == 0)) {
-        sample_print("invalid canvas info\n");
-        return TD_FAILURE;
-    }
-
-    stride_pixels = canvas_info.stride / sizeof(td_u16);
-    sample_region_osd_clear_canvas((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
-        ctx->canvas.height);
-
     if (snprintf_s(text, sizeof(text), sizeof(text) - 1, "IN: %u\nOUT: %u", in_cnt, out_cnt) < 0) {
         sample_print("snprintf_s failed\n");
         return TD_FAILURE;
     }
 
-    {
-        td_u32 text_width = sample_region_osd_measure_text_width(text);
-        td_u32 start_x = SAMPLE_REGION_OSD_PADDING_X;
-
-        if ((start_x >= ctx->canvas.width) || (text_width + start_x > ctx->canvas.width)) {
-            start_x = 0;
-        }
-
-        sample_region_osd_draw_line((td_u16 *)canvas_info.virt_addr, stride_pixels, ctx->canvas.width,
-            ctx->canvas.height, start_x, SAMPLE_REGION_OSD_PADDING_Y, text, SAMPLE_REGION_OSD_COLOR_FOREGROUND);
-    }
-
-    ret = ss_mpi_rgn_update_canvas(ctx->handle);
+    ret = sample_region_osd_draw_text(ctx, text);
     if (ret != TD_SUCCESS) {
-        sample_print("ss_mpi_rgn_update_canvas failed %#x\n", ret);
         return ret;
     }
 
@@ -559,6 +720,34 @@ static td_s32 sample_region_osd_update_ctx(sample_region_osd_context *ctx, td_u3
     ctx->last_out = out_cnt;
 
     return TD_SUCCESS;
+}
+
+static td_s32 sample_region_osd_update_time_ctx(sample_region_osd_context *ctx)
+{
+    char text[64];
+    td_s32 ret;
+
+    if (ctx == TD_NULL) {
+        return TD_FAILURE;
+    }
+
+    if (ctx->attached != TD_TRUE) {
+        ret = sample_region_osd_init_ctx(ctx);
+        if (ret != TD_SUCCESS) {
+            return ret;
+        }
+    }
+
+    ret = sample_region_osd_format_time_string(text, sizeof(text));
+    if (ret != TD_SUCCESS) {
+        return ret;
+    }
+
+    if ((ctx->last_text[0] != '\0') && (strcmp(ctx->last_text, text) == 0)) {
+        return TD_SUCCESS;
+    }
+
+    return sample_region_osd_draw_text(ctx, text);
 }
 
 /* 可放在 sample_region_utils.c / sample_vio.c */
@@ -577,12 +766,12 @@ td_s32 sample_region_attach_red_cover_to_venc1(td_void)
 
 td_s32 sample_region_osd_update_venc0(td_u32 in_cnt, td_u32 out_cnt)
 {
-    return sample_region_osd_update_ctx(&g_sample_region_osd_ctx_venc0, in_cnt, out_cnt);
+    return sample_region_osd_update_counter_ctx(&g_sample_region_osd_ctx_venc0, in_cnt, out_cnt);
 }
 
 td_s32 sample_region_osd_update_venc1(td_u32 in_cnt, td_u32 out_cnt)
 {
-    return sample_region_osd_update_ctx(&g_sample_region_osd_ctx_venc1, in_cnt, out_cnt);
+    return sample_region_osd_update_counter_ctx(&g_sample_region_osd_ctx_venc1, in_cnt, out_cnt);
 }
 
 td_s32 sample_region_osd_stop_venc0(td_void)
@@ -593,4 +782,54 @@ td_s32 sample_region_osd_stop_venc0(td_void)
 td_s32 sample_region_osd_stop_venc1(td_void)
 {
     return sample_region_osd_destroy_ctx(&g_sample_region_osd_ctx_venc1);
+}
+
+td_s32 sample_region_attach_time_to_venc0(td_u32 video_width, td_u32 video_height)
+{
+    td_s32 ret = sample_region_osd_set_video_size(&g_sample_region_osd_time_ctx_venc0, video_width, video_height);
+    if (ret != TD_SUCCESS) {
+        return ret;
+    }
+
+    return sample_region_osd_init_ctx(&g_sample_region_osd_time_ctx_venc0);
+}
+
+td_s32 sample_region_attach_time_to_venc1(td_u32 video_width, td_u32 video_height)
+{
+    td_s32 ret = sample_region_osd_set_video_size(&g_sample_region_osd_time_ctx_venc1, video_width, video_height);
+    if (ret != TD_SUCCESS) {
+        return ret;
+    }
+
+    return sample_region_osd_init_ctx(&g_sample_region_osd_time_ctx_venc1);
+}
+
+td_s32 sample_region_osd_update_time_venc0(td_void)
+{
+    return sample_region_osd_update_time_ctx(&g_sample_region_osd_time_ctx_venc0);
+}
+
+td_s32 sample_region_osd_update_time_venc1(td_void)
+{
+    return sample_region_osd_update_time_ctx(&g_sample_region_osd_time_ctx_venc1);
+}
+
+td_s32 sample_region_osd_set_time_video_size_venc0(td_u32 video_width, td_u32 video_height)
+{
+    return sample_region_osd_set_video_size(&g_sample_region_osd_time_ctx_venc0, video_width, video_height);
+}
+
+td_s32 sample_region_osd_set_time_video_size_venc1(td_u32 video_width, td_u32 video_height)
+{
+    return sample_region_osd_set_video_size(&g_sample_region_osd_time_ctx_venc1, video_width, video_height);
+}
+
+td_s32 sample_region_osd_stop_time_venc0(td_void)
+{
+    return sample_region_osd_destroy_ctx(&g_sample_region_osd_time_ctx_venc0);
+}
+
+td_s32 sample_region_osd_stop_time_venc1(td_void)
+{
+    return sample_region_osd_destroy_ctx(&g_sample_region_osd_time_ctx_venc1);
 }
